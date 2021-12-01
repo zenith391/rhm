@@ -18,6 +18,10 @@ pub const Instruction = union(enum) {
         target: Register,
         value: u8
     },
+    LoadString: struct {
+        target: Register,
+        value: []const u8
+    },
     Add: struct {
         target: Register,
         lhs: Register,
@@ -150,6 +154,15 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
 
             return numberIdx;
         },
+        .StringLiteral => |literal| {
+            const stringIdx = try state.getFreeRegister();
+            try state.instructions.append(.{ .LoadString = .{
+                .target = stringIdx,
+                .value = literal
+            }});
+
+            return stringIdx;
+        },
         .Add => |addition| {
             const lhsIdx = try encodeExpression(state, addition.lhs.*);
             defer state.freeRegister(lhsIdx);
@@ -166,19 +179,41 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
             return resultIdx;
         },
         .FunctionCall => |call| {
-            // TODO: get result
+            // TODO: handle return values
+            var start = Register.id(0);
+            if (call.args.len > 0) {
+                for (call.args) |arg, i| {
+                    const idx = try encodeExpression(state, arg);
+                    // set start to the location of the first argument
+                    if (i == 0) {
+                        start = idx;
+                    }
+
+                    // expected register
+                    const expected = @intToEnum(Register, @enumToInt(start) + @intCast(u8, i));
+
+                    if (idx != expected) {
+                        try state.instructions.append(.{ .Move = .{
+                            .source = idx,
+                            .target = expected
+                        }});
+                    }
+                }
+            }
             try state.instructions.append(.{ .CallFunction = .{
                 .name = call.name,
-                .args_start = Register.id(0),
-                .args_num = 0
+                .args_start = start,
+                .args_num = @intCast(u8, call.args.len)
             }});
-            unreachable;
+            
+            return Register.id(0); // no destination register :'(
         },
         .Local => |local| {
             const resultIdx = try state.getFreeRegister();
             try state.instructions.append(.{ .LoadLocal = .{
                 .target = resultIdx,
-                .local = state.locals.get(local).? // correct use of locals should have been made in a validation phase
+                // TODO: if not found in locals, load it from globals
+                .local = state.locals.get(local).?
             }});
 
             return resultIdx;

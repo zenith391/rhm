@@ -4,3 +4,5 @@ a = a + 3
 b = 1 + 1
 theResult = a + b
 print(theResult)
+print("Hello, World")
+file = readAll()

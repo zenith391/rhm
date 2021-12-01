@@ -6,6 +6,7 @@ const Allocator = *std.mem.Allocator;
 
 pub const Parser = struct {
     core: ParserCore,
+    source: []const u8,
     allocator: Allocator,
 
     const TokenType = enum {
@@ -13,12 +14,14 @@ pub const Parser = struct {
         identifier,
         whitespace,
         linefeed,
+        double_quote,
         @"(",
         @")",
         @",",
         @"+",
         @";",
         define,
+        char,
     };
 
     const Pattern = ptk.Pattern(TokenType);
@@ -34,6 +37,9 @@ pub const Parser = struct {
         Pattern.create(.@",", matchers.literal(",")),
         Pattern.create(.@";", matchers.literal(";")),
         Pattern.create(.define, matchers.literal("=")),
+        Pattern.create(.double_quote, matchers.literal("\"")),
+        // TODO: just take any character except new line and control characters and some other
+        Pattern.create(.char, matchers.takeAnyOfIgnoreCase("abcdefghijklmnopqrstuvwxyz0123456789 _?.;:/!§%*$")),
     });
 
     const ParserCore = ptk.ParserCore(Tokenizer, .{ .whitespace });
@@ -44,6 +50,7 @@ pub const Parser = struct {
 
         var parser = Parser {
             .core = ParserCore.init(&tokenizer),
+            .source = block,
             .allocator = allocator
         };
 
@@ -82,6 +89,16 @@ pub const Parser = struct {
                 else => {}
             }
         }
+
+        pub fn deinitAll(self: *const Statement, allocator: Allocator) void {
+            switch (self.*) {
+                .FunctionCall => |stat| {
+                    for (stat.args) |arg| arg.deinit(allocator);
+                },
+                else => {}
+            }
+            self.deinit(allocator);
+        }
     };
 
     pub const Number = []const u8;
@@ -93,6 +110,7 @@ pub const Parser = struct {
         FunctionCall: FunctionCall,
         Number: []const u8,
         Local: []const u8,
+        StringLiteral: []const u8,
 
         pub fn deinit(self: *const Expression, allocator: Allocator) void {
             switch (self.*) {
@@ -117,7 +135,10 @@ pub const Parser = struct {
         errdefer self.core.restoreState(state);
 
         var statements = std.ArrayList(Statement).init(self.allocator);
-        errdefer statements.deinit();
+        errdefer {
+            for (statements.items) |stat| stat.deinitAll(self.allocator);
+            statements.deinit();
+        }
 
         while (self.acceptStatement()) |optStat| {
             if (optStat) |stat| {
@@ -257,7 +278,35 @@ pub const Parser = struct {
         if (self.core.accept(comptime ruleset.is(.identifier))) |token| {
             return Expression { .Local = token.text };
         } else |_| {
-            return Expression { .Number = try self.acceptNumber() };
+            if (self.acceptNumber()) |number| {
+                return Expression { .Number = number };
+            } else |_| {
+                return Expression { .StringLiteral = try self.acceptStringLiteral() };
+            }
+        }
+    }
+
+    pub fn acceptStringLiteral(self: *Parser) Error![]const u8 {
+        const state = self.core.saveState();
+        errdefer self.core.restoreState(state);
+
+        var start: usize = 0;
+        var end: usize = 0;
+        _ = try self.core.accept(comptime ruleset.is(.double_quote));
+        // TODO: maybe just bypass the tokenizer
+        while (self.core.accept(comptime ruleset.oneOf(.{ .char, .identifier, .@"," }))) |token| {
+            end = @ptrToInt(token.text.ptr) - @ptrToInt(self.source.ptr) + token.text.len;
+            if (start == 0) {
+                start = end - token.text.len;
+            }
+        } else |_| {}
+
+        _ = try self.core.accept(comptime ruleset.is(.double_quote));
+        
+        if (start != 0) {
+            return self.source[start..end];
+        } else {
+            return "";
         }
     }
 
