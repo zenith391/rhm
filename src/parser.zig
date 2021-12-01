@@ -33,7 +33,7 @@ pub const Parser = struct {
         Pattern.create(.@")", matchers.literal(")")),
         Pattern.create(.@",", matchers.literal(",")),
         Pattern.create(.@";", matchers.literal(";")),
-        Pattern.create(.define, matchers.literal(":=")),
+        Pattern.create(.define, matchers.literal("=")),
     });
 
     const ParserCore = ptk.ParserCore(Tokenizer, .{ .whitespace });
@@ -72,7 +72,7 @@ pub const Parser = struct {
             name: []const u8,
             value: Expression
         },
-        FunctionCall: FunctionCall
+        FunctionCall: FunctionCall,
     };
 
     pub const Number = []const u8;
@@ -81,7 +81,7 @@ pub const Parser = struct {
     pub const Expression = union(enum) {
         // TODO: pointers to expression instead of number
         Add: struct { lhs: Number, rhs: Number },
-        FunctionCall: FunctionCall
+        FunctionCall: FunctionCall,
     };
 
     pub fn acceptBlock(self: *Parser) Error!Block {
@@ -154,7 +154,6 @@ pub const Parser = struct {
 
         const id = self.core.accept(comptime ruleset.is(.identifier)) catch {
             self.core.restoreState(state); return null; };
-        std.log.info("call {s}", .{ id.text });
 
         _ = self.core.accept(comptime ruleset.is(.@"(")) catch {
             self.core.restoreState(state); return null; };
