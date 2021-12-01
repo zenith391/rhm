@@ -3,7 +3,13 @@ const parser = @import("parser.zig").Parser;
 const Allocator = *std.mem.Allocator;
 
 const Local = enum(u8) { _ };
-const Register = enum(u8) { _ };
+const Register = enum(u8) {
+    _,
+
+    pub fn id(n: u8) Register {
+        return @intToEnum(Register, n);
+    }
+};
 
 // Using an union makes each instruction take more memory but avoid loading times.
 pub const Instruction = union(enum) {
@@ -26,7 +32,14 @@ pub const Instruction = union(enum) {
         source: Register
     },
     CallFunction: struct {
-        name: []const u8
+        name: []const u8,
+        args_start: Register,
+        args_num: u8
+    },
+    /// Move the content of one register to another
+    Move: struct {
+        source: Register,
+        target: Register
     }
 };
 
@@ -47,6 +60,22 @@ const IrEncodeState = struct {
             .allocator = allocator
         };
     }
+
+    pub const GetFreeRegisterError = error { OutOfRegisters };
+    fn getFreeRegister(self: *IrEncodeState) GetFreeRegisterError!Register {
+        return @intToEnum(Register, @intCast(u8,
+            self.freeRegisters.toggleFirstSet() orelse return error.OutOfRegisters));
+    }
+
+    fn peekFreeRegister(self: *IrEncodeState) GetFreeRegisterError!Register {
+        return @intToEnum(Register, @intCast(u8,
+            self.freeRegisters.findFirstSet() orelse return error.OutOfRegisters));
+    }
+
+    fn freeRegister(self: *IrEncodeState, register: Register) void {
+        self.freeRegisters.set(@enumToInt(register));
+    }
+
 };
 
 pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
@@ -57,11 +86,11 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
     defer state.locals.deinit();
 
     for (block) |statement| {
-        _ = statement;
+        defer statement.deinit(allocator);
         switch (statement) {
             .SetLocal => |assign| {
                 const valueIdx = try encodeExpression(&state, assign.value);
-                defer freeRegister(&state.freeRegisters, valueIdx);
+                defer state.freeRegister(valueIdx);
 
                 const localIdx = (try state.locals.getOrPutValue(assign.name,
                     @intToEnum(Local, @intCast(u8, state.locals.count())))).value_ptr.*;
@@ -71,8 +100,30 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
                 }});
             },
             .FunctionCall => |call| {
+                var start = Register.id(0);
+                if (call.args.len > 0) {
+                    for (call.args) |arg, i| {
+                        const idx = try encodeExpression(&state, arg);
+                        // set start to the location of the first argument
+                        if (i == 0) {
+                            start = idx;
+                        }
+
+                        // expected register
+                        const expected = @intToEnum(Register, @enumToInt(start) + @intCast(u8, i));
+
+                        if (idx != expected) {
+                            try state.instructions.append(.{ .Move = .{
+                                .source = idx,
+                                .target = expected
+                            }});
+                        }
+                    }
+                }
                 try state.instructions.append(.{ .CallFunction = .{
-                    .name = call.name
+                    .name = call.name,
+                    .args_start = start,
+                    .args_num = @intCast(u8, call.args.len)
                 }});
             }
         }
@@ -81,17 +132,8 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
     return state.instructions.toOwnedSlice();
 }
 
-const GetFreeRegisterError = error { OutOfRegisters };
-fn getFreeRegister(freeRegisters: *RegisterBitSet) GetFreeRegisterError!Register {
-    return @intToEnum(Register, @intCast(u8,
-        freeRegisters.toggleFirstSet() orelse return error.OutOfRegisters));
-}
-
-fn freeRegister(freeRegisters: *RegisterBitSet, register: Register) void {
-    freeRegisters.set(@enumToInt(register));
-}
-
-const ExpressionEncodeError = error {} || GetFreeRegisterError || std.fmt.ParseIntError || std.mem.Allocator.Error;
+const ExpressionEncodeError = error {} || IrEncodeState.GetFreeRegisterError ||
+    std.fmt.ParseIntError || std.mem.Allocator.Error;
 
 /// Returns the register containing the expression's value
 fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEncodeError!Register {
@@ -100,7 +142,7 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
         .Number => |number| {
             const num = try std.fmt.parseUnsigned(u8, number, 10);
 
-            const numberIdx = try getFreeRegister(&state.freeRegisters);
+            const numberIdx = try state.getFreeRegister();
             try state.instructions.append(.{ .LoadByte = .{
                 .target = numberIdx,
                 .value = num
@@ -110,12 +152,12 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
         },
         .Add => |addition| {
             const lhsIdx = try encodeExpression(state, addition.lhs.*);
-            defer freeRegister(&state.freeRegisters, lhsIdx);
+            defer state.freeRegister(lhsIdx);
 
             const rhsIdx = try encodeExpression(state, addition.rhs.*);
-            defer freeRegister(&state.freeRegisters, rhsIdx);
+            defer state.freeRegister(rhsIdx);
 
-            const resultIdx = try getFreeRegister(&state.freeRegisters);
+            const resultIdx = try state.getFreeRegister();
             try state.instructions.append(.{ .Add = .{
                 .target = resultIdx,
                 .lhs = lhsIdx,
@@ -126,12 +168,14 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
         .FunctionCall => |call| {
             // TODO: get result
             try state.instructions.append(.{ .CallFunction = .{
-                .name = call.name
+                .name = call.name,
+                .args_start = Register.id(0),
+                .args_num = 0
             }});
             unreachable;
         },
         .Local => |local| {
-            const resultIdx = try getFreeRegister(&state.freeRegisters);
+            const resultIdx = try state.getFreeRegister();
             try state.instructions.append(.{ .LoadLocal = .{
                 .target = resultIdx,
                 .local = state.locals.get(local).? // correct use of locals should have been made in a validation phase

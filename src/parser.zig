@@ -63,7 +63,7 @@ pub const Parser = struct {
 
     pub const FunctionCall = struct {
         name: []const u8,
-        // args: void
+        args: []const Expression
     };
 
     pub const Statement = union(enum) {
@@ -72,6 +72,16 @@ pub const Parser = struct {
             value: Expression
         },
         FunctionCall: FunctionCall,
+
+        pub fn deinit(self: *const Statement, allocator: Allocator) void {
+            switch (self.*) {
+                .FunctionCall => |stat| {
+                    // assume function's arguments were free before
+                    allocator.free(stat.args);
+                },
+                else => {}
+            }
+        }
     };
 
     pub const Number = []const u8;
@@ -92,6 +102,10 @@ pub const Parser = struct {
 
                     expr.rhs.deinit(allocator);
                     allocator.destroy(expr.rhs);
+                },
+                .FunctionCall => |expr| {
+                    for (expr.args) |arg| arg.deinit(allocator);
+                    allocator.free(expr.args);
                 },
                 else => {}
             }
@@ -172,6 +186,12 @@ pub const Parser = struct {
         _ = self.core.accept(comptime ruleset.is(.@"(")) catch {
             self.core.restoreState(state); return null; };
 
+        var arguments = std.ArrayList(Expression).init(self.allocator);
+        errdefer {
+            for (arguments.items) |arg| arg.deinit(self.allocator);
+            arguments.deinit();
+        }
+
         var first = true;
         while (true) {
             if (!first) {
@@ -185,15 +205,14 @@ pub const Parser = struct {
                 error.UnexpectedToken => break,
                 else => return err
             } else return err;
-            arg.deinit(self.allocator); // TODO: work on arguments to function
-            _ = arg;
+            try arguments.append(arg);
 
             first = false;
         }
 
         _ = try self.core.accept(comptime ruleset.is(.@")"));
 
-        return FunctionCall { .name = id.text };
+        return FunctionCall { .name = id.text, .args = arguments.toOwnedSlice() };
     }
 
     pub fn acceptExpression(self: *Parser) Error!Expression {
@@ -222,7 +241,6 @@ pub const Parser = struct {
             const rhsDupe = try self.allocator.create(Expression);
             errdefer self.allocator.destroy(rhsDupe);
             rhsDupe.* = rhs;
-            std.log.info("{} + {}", .{ lhs, rhs });
             return Expression { .Add = .{
                 .lhs = lhsDupe,
                 .rhs = rhsDupe
