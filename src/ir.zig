@@ -2,8 +2,8 @@ const std = @import("std");
 const parser = @import("parser.zig").Parser;
 const Allocator = *std.mem.Allocator;
 
-const Local = u8;
-const Register = u8;
+const Local = enum(u8) { _ };
+const Register = enum(u8) { _ };
 
 // Using an union makes each instruction take more memory but avoid loading times.
 pub const Instruction = union(enum) {
@@ -61,10 +61,10 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
         switch (statement) {
             .SetLocal => |assign| {
                 const valueIdx = try encodeExpression(&state, assign.value);
-                defer state.freeRegisters.set(valueIdx);
+                defer freeRegister(&state.freeRegisters, valueIdx);
 
                 const localIdx = (try state.locals.getOrPutValue(assign.name,
-                    @intCast(u8, state.locals.count()))).value_ptr.*;
+                    @intToEnum(Local, @intCast(u8, state.locals.count())))).value_ptr.*;
                 try state.instructions.append(.{ .SetLocal = .{
                     .local = localIdx,
                     .source = valueIdx
@@ -83,7 +83,12 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
 
 const GetFreeRegisterError = error { OutOfRegisters };
 fn getFreeRegister(freeRegisters: *RegisterBitSet) GetFreeRegisterError!Register {
-    return @intCast(u8, freeRegisters.toggleFirstSet() orelse return error.OutOfRegisters);
+    return @intToEnum(Register, @intCast(u8,
+        freeRegisters.toggleFirstSet() orelse return error.OutOfRegisters));
+}
+
+fn freeRegister(freeRegisters: *RegisterBitSet, register: Register) void {
+    freeRegisters.set(@enumToInt(register));
 }
 
 const ExpressionEncodeError = error {} || GetFreeRegisterError || std.fmt.ParseIntError || std.mem.Allocator.Error;
@@ -105,10 +110,10 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
         },
         .Add => |addition| {
             const lhsIdx = try encodeExpression(state, addition.lhs.*);
-            defer state.freeRegisters.set(lhsIdx);
+            defer freeRegister(&state.freeRegisters, lhsIdx);
 
             const rhsIdx = try encodeExpression(state, addition.rhs.*);
-            defer state.freeRegisters.set(rhsIdx);
+            defer freeRegister(&state.freeRegisters, rhsIdx);
 
             const resultIdx = try getFreeRegister(&state.freeRegisters);
             try state.instructions.append(.{ .Add = .{

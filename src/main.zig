@@ -25,10 +25,11 @@ pub fn main() !void {
     for (ir) |instruction| {
         std.log.info("{}", .{ instruction });
         switch (instruction) {
-            .LoadByte => |lb| registers[lb.target] = lb.value,
-            .Add => |add| registers[add.target] = registers[add.lhs] + registers[add.rhs],
+            .LoadByte => |lb| registers[@enumToInt(lb.target)] = lb.value,
+            .Add => |add| registers[@enumToInt(add.target)] = registers[@enumToInt(add.lhs)]
+                + registers[@enumToInt(add.rhs)],
             .SetLocal => |set| {
-                std.log.info("set local {d} to number {d}", .{ set.local, registers[set.source] });
+                std.log.info("set local {d} to number {d}", .{ set.local, registers[@enumToInt(set.source)] });
             },
             .LoadLocal => |set| {
                 std.log.info("load from local {d} to register {d}", .{ set.local, set.target });

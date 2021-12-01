@@ -89,7 +89,6 @@ pub const Parser = struct {
                 .Add => |expr| {
                     expr.lhs.deinit(allocator);
                     allocator.destroy(expr.lhs);
-                    std.log.info("free address 0x{x}", .{ @ptrToInt(expr.lhs) });
 
                     expr.rhs.deinit(allocator);
                     allocator.destroy(expr.rhs);
