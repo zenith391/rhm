@@ -17,6 +17,10 @@ pub const Instruction = union(enum) {
         lhs: Register,
         rhs: Register
     },
+    LoadLocal: struct {
+        target: Register,
+        local: Local
+    },
     SetLocal: struct {
         local: Local,
         source: Register
@@ -29,76 +33,106 @@ pub const Instruction = union(enum) {
 const max_register_value = std.math.powi(usize, 2, @bitSizeOf(Register)) catch unreachable;
 const RegisterBitSet = std.StaticBitSet(max_register_value);
 
+const IrEncodeState = struct {
+    instructions: std.ArrayList(Instruction),
+    locals: std.StringHashMap(Local),
+    freeRegisters: RegisterBitSet,
+    allocator: Allocator,
+    
+    pub fn init(allocator: Allocator) IrEncodeState {
+        return IrEncodeState {
+            .instructions = std.ArrayList(Instruction).init(allocator),
+            .locals = std.StringHashMap(Local).init(allocator),
+            .freeRegisters = RegisterBitSet.initFull(),
+            .allocator = allocator
+        };
+    }
+};
+
 pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
-    var instructions = std.ArrayList(Instruction).init(allocator);
-    errdefer instructions.deinit();
+    var state = IrEncodeState.init(allocator);
+    errdefer state.instructions.deinit();
 
     // TODO: use for debug info
-    var locals = std.StringHashMap(Local).init(allocator);
-    defer locals.deinit();
-
-    // TODO: pre-compute the max number of used registers for the bit set size
-    var freeRegisters = RegisterBitSet.initFull();
-    _ = freeRegisters;
+    defer state.locals.deinit();
 
     for (block) |statement| {
         _ = statement;
         switch (statement) {
             .SetLocal => |assign| {
-                const valueIdx = try encodeExpression(&instructions, &freeRegisters, assign.value);
-                defer freeRegisters.set(valueIdx);
+                const valueIdx = try encodeExpression(&state, assign.value);
+                defer state.freeRegisters.set(valueIdx);
 
-                const localIdx = (try locals.getOrPutValue(assign.name, @intCast(u8, locals.count()))).value_ptr.*;
-                try instructions.append(.{ .SetLocal = .{
+                const localIdx = (try state.locals.getOrPutValue(assign.name,
+                    @intCast(u8, state.locals.count()))).value_ptr.*;
+                try state.instructions.append(.{ .SetLocal = .{
                     .local = localIdx,
                     .source = valueIdx
                 }});
             },
             .FunctionCall => |call| {
-                try instructions.append(.{ .CallFunction = .{
+                try state.instructions.append(.{ .CallFunction = .{
                     .name = call.name
                 }});
             }
         }
     }
 
-    return instructions.toOwnedSlice();
+    return state.instructions.toOwnedSlice();
 }
 
-fn getFreeRegister(freeRegisters: *RegisterBitSet) !Register {
+const GetFreeRegisterError = error { OutOfRegisters };
+fn getFreeRegister(freeRegisters: *RegisterBitSet) GetFreeRegisterError!Register {
     return @intCast(u8, freeRegisters.toggleFirstSet() orelse return error.OutOfRegisters);
 }
 
+const ExpressionEncodeError = error {} || GetFreeRegisterError || std.fmt.ParseIntError || std.mem.Allocator.Error;
+
 /// Returns the register containing the expression's value
-fn encodeExpression(instructions: *std.ArrayList(Instruction), freeRegisters: *RegisterBitSet, expr: parser.Expression) !Register {
-    _ = freeRegisters;
+fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEncodeError!Register {
+    defer expr.deinit(state.allocator);
     switch (expr) {
+        .Number => |number| {
+            const num = try std.fmt.parseUnsigned(u8, number, 10);
+
+            const numberIdx = try getFreeRegister(&state.freeRegisters);
+            try state.instructions.append(.{ .LoadByte = .{
+                .target = numberIdx,
+                .value = num
+            }});
+
+            return numberIdx;
+        },
         .Add => |addition| {
-            const lhs = try std.fmt.parseUnsigned(u8, addition.lhs, 10);
-            const rhs = try std.fmt.parseUnsigned(u8, addition.rhs, 10);
+            const lhsIdx = try encodeExpression(state, addition.lhs.*);
+            defer state.freeRegisters.set(lhsIdx);
 
-            const lhsIdx = try getFreeRegister(freeRegisters);
-            defer freeRegisters.set(lhsIdx);
-            try instructions.append(.{ .LoadByte = .{
-                .target = lhsIdx,
-                .value = lhs
-            }});
+            const rhsIdx = try encodeExpression(state, addition.rhs.*);
+            defer state.freeRegisters.set(rhsIdx);
 
-            const rhsIdx = try getFreeRegister(freeRegisters);
-            defer freeRegisters.set(rhsIdx);
-            try instructions.append(.{ .LoadByte = .{
-                .target = rhsIdx,
-                .value = rhs
-            }});
-
-            const resultIdx = try getFreeRegister(freeRegisters);
-            try instructions.append(.{ .Add = .{
+            const resultIdx = try getFreeRegister(&state.freeRegisters);
+            try state.instructions.append(.{ .Add = .{
                 .target = resultIdx,
-                .lhs = 0,
-                .rhs = 1
+                .lhs = lhsIdx,
+                .rhs = rhsIdx
             }});
             return resultIdx;
         },
-        else => unreachable
+        .FunctionCall => |call| {
+            // TODO: get result
+            try state.instructions.append(.{ .CallFunction = .{
+                .name = call.name
+            }});
+            unreachable;
+        },
+        .Local => |local| {
+            const resultIdx = try getFreeRegister(&state.freeRegisters);
+            try state.instructions.append(.{ .LoadLocal = .{
+                .target = resultIdx,
+                .local = state.locals.get(local).? // correct use of locals should have been made in a validation phase
+            }});
+
+            return resultIdx;
+        }
     }
 }

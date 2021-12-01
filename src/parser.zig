@@ -41,7 +41,6 @@ pub const Parser = struct {
 
     pub fn parse(allocator: Allocator, block: []const u8) !Block {
         var tokenizer = Tokenizer.init(block);
-        std.log.debug("parse {s}", .{ block });
 
         var parser = Parser {
             .core = ParserCore.init(&tokenizer),
@@ -80,8 +79,24 @@ pub const Parser = struct {
 
     pub const Expression = union(enum) {
         // TODO: pointers to expression instead of number
-        Add: struct { lhs: Number, rhs: Number },
+        Add: struct { lhs: *const Expression, rhs: *const Expression },
         FunctionCall: FunctionCall,
+        Number: []const u8,
+        Local: []const u8,
+
+        pub fn deinit(self: *const Expression, allocator: Allocator) void {
+            switch (self.*) {
+                .Add => |expr| {
+                    expr.lhs.deinit(allocator);
+                    allocator.destroy(expr.lhs);
+                    std.log.info("free address 0x{x}", .{ @ptrToInt(expr.lhs) });
+
+                    expr.rhs.deinit(allocator);
+                    allocator.destroy(expr.rhs);
+                },
+                else => {}
+            }
+        }
     };
 
     pub fn acceptBlock(self: *Parser) Error!Block {
@@ -171,6 +186,7 @@ pub const Parser = struct {
                 error.UnexpectedToken => break,
                 else => return err
             } else return err;
+            arg.deinit(self.allocator); // TODO: work on arguments to function
             _ = arg;
 
             first = false;
@@ -196,11 +212,36 @@ pub const Parser = struct {
         const state = self.core.saveState();
         errdefer self.core.restoreState(state);
 
-        const lhs = try self.acceptNumber();
-        _ = try self.core.accept(comptime ruleset.is(.@"+"));
-        const rhs = try self.acceptNumber();
+        const lhs = try self.acceptVarExpression();
+        
+        if (self.core.accept(comptime ruleset.is(.@"+"))) |_| {
+            const rhs = try self.acceptVarExpression();
+            const lhsDupe = try self.allocator.create(Expression);
+            errdefer self.allocator.destroy(lhsDupe);
+            lhsDupe.* = lhs;
 
-        return Expression { .Add = .{ .lhs = lhs, .rhs = rhs }};
+            const rhsDupe = try self.allocator.create(Expression);
+            errdefer self.allocator.destroy(rhsDupe);
+            rhsDupe.* = rhs;
+            std.log.info("{} + {}", .{ lhs, rhs });
+            return Expression { .Add = .{
+                .lhs = lhsDupe,
+                .rhs = rhsDupe
+            }};
+        } else |_| {
+            return lhs;
+        }
+    }
+
+    pub fn acceptVarExpression(self: *Parser) Error!Expression {
+        const state = self.core.saveState();
+        errdefer self.core.restoreState(state);
+
+        if (self.core.accept(comptime ruleset.is(.identifier))) |token| {
+            return Expression { .Local = token.text };
+        } else |_| {
+            return Expression { .Number = try self.acceptNumber() };
+        }
     }
 
     // TODO: convert number to rationals
@@ -208,14 +249,8 @@ pub const Parser = struct {
         const state = self.core.saveState();
         errdefer self.core.restoreState(state);
 
-        const token = try self.core.accept(comptime ruleset.oneOf(.{
-            .number
-        }));
-
-        switch (token.type) {
-            .number => return token.text,
-            else => unreachable
-        }
+        const token = try self.core.accept(comptime ruleset.is(.number));
+        return token.text;
     }
 
 };

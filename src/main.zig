@@ -30,6 +30,9 @@ pub fn main() !void {
             .SetLocal => |set| {
                 std.log.info("set local {d} to number {d}", .{ set.local, registers[set.source] });
             },
+            .LoadLocal => |set| {
+                std.log.info("load from local {d} to register {d}", .{ set.local, set.target });
+            },
             .CallFunction => |call| std.log.info("call {s}", .{ call.name })
         }
     }
