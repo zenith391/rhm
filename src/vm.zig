@@ -17,10 +17,12 @@ pub fn execute(ir: []const IntermediateRepresentation.Instruction) void {
         switch (instruction) {
             .LoadByte => |lb| registers[@enumToInt(lb.target)] = .{ .Number = lb.value },
             .LoadString => |ls| registers[@enumToInt(ls.target)] = .{ .String = ls.value },
-            .Add => |add| registers[@enumToInt(add.target)] = .{ .Number = registers[@enumToInt(add.lhs)].Number
-                + registers[@enumToInt(add.rhs)].Number },
+            .Add => |add| {
+                const result = registers[@enumToInt(add.lhs)].Number + registers[@enumToInt(add.rhs)].Number;
+                registers[@enumToInt(add.target)] = .{ .Number = result };
+            },
             .SetLocal => |set| {
-                std.log.scoped(.vm).debug("set local {d} to number {d}", .{ set.local, registers[@enumToInt(set.source)] });
+                std.log.scoped(.vm).debug("set local {d} to {d}", .{ set.local, registers[@enumToInt(set.source)] });
                 locals[@enumToInt(set.local)] = registers[@enumToInt(set.source)];
             },
             .LoadLocal => |load| {
@@ -35,6 +37,8 @@ pub fn execute(ir: []const IntermediateRepresentation.Instruction) void {
                         .Number => std.log.info("{}", .{ value.Number }),
                         .String => std.log.info("{s}", .{ value.String }),
                     }
+                } else {
+                    std.log.err("no such function {s}", .{ call.name });
                 }
             },
             .Move => |move| {

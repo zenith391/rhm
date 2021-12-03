@@ -80,6 +80,16 @@ const IrEncodeState = struct {
         self.freeRegisters.set(@enumToInt(register));
     }
 
+    pub const TakeRegisterError = error { RegisterUsed };
+    fn takeRegister(self: *IrEncodeState, register: Register) TakeRegisterError!void {
+        const idx = @enumToInt(register);
+        if (self.freeRegisters.isSet(idx)) {
+            self.freeRegisters.unset(idx);
+        } else {
+            return error.RegisterUsed;
+        }
+    }
+
 };
 
 pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
@@ -117,6 +127,9 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
                         const expected = @intToEnum(Register, @enumToInt(start) + @intCast(u8, i));
 
                         if (idx != expected) {
+                            state.freeRegister(idx);
+                            try state.takeRegister(expected);
+
                             try state.instructions.append(.{ .Move = .{
                                 .source = idx,
                                 .target = expected
@@ -129,6 +142,13 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
                     .args_start = start,
                     .args_num = @intCast(u8, call.args.len)
                 }});
+
+                if (call.args.len > 0) {
+                    for (call.args) |_, i| {
+                        const reg = @intToEnum(Register, @enumToInt(start) + @intCast(u8, i));
+                        state.freeRegister(reg);
+                    }
+                }
             }
         }
     }
@@ -165,18 +185,16 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
         },
         .Add => |addition| {
             const lhsIdx = try encodeExpression(state, addition.lhs.*);
-            defer state.freeRegister(lhsIdx);
 
             const rhsIdx = try encodeExpression(state, addition.rhs.*);
             defer state.freeRegister(rhsIdx);
-
-            const resultIdx = try state.getFreeRegister();
+            
             try state.instructions.append(.{ .Add = .{
-                .target = resultIdx,
+                .target = lhsIdx, // addition is performed before target is overwritten, so we can re-use register
                 .lhs = lhsIdx,
                 .rhs = rhsIdx
             }});
-            return resultIdx;
+            return lhsIdx;
         },
         .FunctionCall => |call| {
             // TODO: handle return values
