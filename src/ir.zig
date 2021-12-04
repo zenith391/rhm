@@ -1,6 +1,7 @@
 const std = @import("std");
 const parser = @import("parser.zig").Parser;
 const Allocator = *std.mem.Allocator;
+const real = @import("Real.zig");
 
 const Local = enum(u8) { _ };
 const Register = enum(u8) {
@@ -99,11 +100,11 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
     // TODO: use for debug info
     defer state.locals.deinit();
 
-    for (block) |statement| {
+    for (block) |*statement| {
         defer statement.deinit(allocator);
-        switch (statement) {
-            .SetLocal => |assign| {
-                const valueIdx = try encodeExpression(&state, assign.value);
+        switch (statement.*) {
+            .SetLocal => |*assign| {
+                const valueIdx = try encodeExpression(&state, &assign.value);
                 defer state.freeRegister(valueIdx);
 
                 const localIdx = (try state.locals.getOrPutValue(assign.name,
@@ -113,10 +114,10 @@ pub fn encode(allocator: Allocator, block: parser.Block) ![]const Instruction {
                     .source = valueIdx
                 }});
             },
-            .FunctionCall => |call| {
+            .FunctionCall => |*call| {
                 var start = Register.id(0);
                 if (call.args.len > 0) {
-                    for (call.args) |arg, i| {
+                    for (call.args) |*arg, i| {
                         const idx = try encodeExpression(&state, arg);
                         // set start to the location of the first argument
                         if (i == 0) {
@@ -160,19 +161,21 @@ const ExpressionEncodeError = error {} || IrEncodeState.GetFreeRegisterError ||
     std.fmt.ParseIntError || std.mem.Allocator.Error;
 
 /// Returns the register containing the expression's value
-fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEncodeError!Register {
+fn encodeExpression(state: *IrEncodeState, expr: *parser.Expression) ExpressionEncodeError!Register {
     defer expr.deinit(state.allocator);
-    switch (expr) {
+    switch (expr.*) {
         .Number => |number| {
-            const num = try std.fmt.parseUnsigned(u8, number, 10);
+            if (number.q.toConst().eq(real.bigOne)) {
+                const numberIdx = try state.getFreeRegister();
+                try state.instructions.append(.{ .LoadByte = .{
+                    .target = numberIdx,
+                    .value = number.p.to(u8) catch unreachable
+                }});
 
-            const numberIdx = try state.getFreeRegister();
-            try state.instructions.append(.{ .LoadByte = .{
-                .target = numberIdx,
-                .value = num
-            }});
-
-            return numberIdx;
+                return numberIdx;
+            } else {
+                @panic("TODO: rational numbers");
+            }
         },
         .StringLiteral => |literal| {
             const stringIdx = try state.getFreeRegister();
@@ -184,9 +187,9 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
             return stringIdx;
         },
         .Add => |addition| {
-            const lhsIdx = try encodeExpression(state, addition.lhs.*);
+            const lhsIdx = try encodeExpression(state, addition.lhs);
 
-            const rhsIdx = try encodeExpression(state, addition.rhs.*);
+            const rhsIdx = try encodeExpression(state, addition.rhs);
             defer state.freeRegister(rhsIdx);
             
             try state.instructions.append(.{ .Add = .{
@@ -200,7 +203,7 @@ fn encodeExpression(state: *IrEncodeState, expr: parser.Expression) ExpressionEn
             // TODO: handle return values
             var start = Register.id(0);
             if (call.args.len > 0) {
-                for (call.args) |arg, i| {
+                for (call.args) |*arg, i| {
                     const idx = try encodeExpression(state, arg);
                     // set start to the location of the first argument
                     if (i == 0) {

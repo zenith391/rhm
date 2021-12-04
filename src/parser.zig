@@ -28,6 +28,7 @@ pub const Parser = struct {
 
     const Tokenizer = ptk.Tokenizer(TokenType, &[_]Pattern{
         Pattern.create(.number, matchers.sequenceOf(.{ matchers.decimalNumber })),
+        Pattern.create(.number, matchers.sequenceOf(.{ matchers.decimalNumber, matchers.literal("."), matchers.decimalNumber })),
         Pattern.create(.identifier, matchers.identifier),
         Pattern.create(.linefeed, matchers.linefeed),
         Pattern.create(.whitespace, matchers.whitespace),
@@ -70,7 +71,7 @@ pub const Parser = struct {
 
     pub const FunctionCall = struct {
         name: []const u8,
-        args: []const Expression
+        args: []Expression
     };
 
     pub const Statement = union(enum) {
@@ -93,7 +94,7 @@ pub const Parser = struct {
         pub fn deinitAll(self: *const Statement, allocator: Allocator) void {
             switch (self.*) {
                 .FunctionCall => |stat| {
-                    for (stat.args) |arg| arg.deinit(allocator);
+                    for (stat.args) |*arg| arg.deinit(allocator);
                 },
                 else => {}
             }
@@ -101,29 +102,32 @@ pub const Parser = struct {
         }
     };
 
-    pub const Number = []const u8;
+    pub const Number = std.math.big.Rational;
     pub const Block = []Statement;
 
     pub const Expression = union(enum) {
         // TODO: pointers to expression instead of number
-        Add: struct { lhs: *const Expression, rhs: *const Expression },
+        Add: struct { lhs: *Expression, rhs: *Expression },
         FunctionCall: FunctionCall,
-        Number: []const u8,
+        Number: Number,
         Local: []const u8,
         StringLiteral: []const u8,
 
-        pub fn deinit(self: *const Expression, allocator: Allocator) void {
+        pub fn deinit(self: *Expression, allocator: Allocator) void {
             switch (self.*) {
                 .Add => |expr| {
-                    expr.lhs.deinit(allocator);
+                    //expr.lhs.deinit(allocator);
                     allocator.destroy(expr.lhs);
 
-                    expr.rhs.deinit(allocator);
+                    //expr.rhs.deinit(allocator);
                     allocator.destroy(expr.rhs);
                 },
                 .FunctionCall => |expr| {
-                    for (expr.args) |arg| arg.deinit(allocator);
+                    for (expr.args) |*arg| arg.deinit(allocator);
                     allocator.free(expr.args);
+                },
+                .Number => |*number| {
+                    number.deinit();
                 },
                 else => {}
             }
@@ -209,7 +213,7 @@ pub const Parser = struct {
 
         var arguments = std.ArrayList(Expression).init(self.allocator);
         errdefer {
-            for (arguments.items) |arg| arg.deinit(self.allocator);
+            for (arguments.items) |*arg| arg.deinit(self.allocator);
             arguments.deinit();
         }
 
@@ -316,7 +320,9 @@ pub const Parser = struct {
         errdefer self.core.restoreState(state);
 
         const token = try self.core.accept(comptime ruleset.is(.number));
-        return token.text;
+        var rational = try Number.init(self.allocator);
+        rational.setFloatString(token.text) catch unreachable;
+        return rational;
     }
 
 };

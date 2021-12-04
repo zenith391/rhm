@@ -43,7 +43,7 @@ const Multiplier = union(enum) {
     }
 };
 
-const bigOne = std.math.big.int.Const { .limbs = &.{1}, .positive = true };
+pub const bigOne = std.math.big.int.Const { .limbs = &.{1}, .positive = true };
 
 /// This class can represent exactly any real number
 pub const Real = struct {
@@ -232,5 +232,5 @@ test "simple rationals" {
     //std.log.err("result * pi = {d}", .{ real });
 
     try real.pow(&pi);
-    std.log.err("(result) ^ pi = {d}", .{ real });
+    std.log.err("(result) ^ pi = {}", .{ real });
 }
