@@ -95,7 +95,22 @@ pub const Real = struct {
         a.multiplier = .{ .Real = new };
     }
 
+    pub fn pow(self: *Real, exponent: *Real) std.mem.Allocator.Error!void {
+        std.debug.assert(self.multiple == .One); // TODO: handle when it isn't the case
+        self.extra = exponent;
+        self.multiple = .Exponential;
+    }
+
     pub fn format(value: Real, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        const prefix: []const u8 = switch (value.multiple) {
+            .Root => "root(",
+            .Sqrt => "√",
+            .Log => "log(",
+            .Exponential => "(",
+            else => ""
+        };
+        try writer.print("{s}", .{ prefix });
+
         switch (value.multiplier) {
             .Real => |real| {
                 try format(real.*, fmt, options, writer);
@@ -116,9 +131,15 @@ pub const Real = struct {
             .Pi => "π",
             .EulerNumber => "e",
             .GoldenRatio => "Φ",
-            else => @panic("TODO")
+            .Root, .Log, .Exponential => ")",
+            .Sqrt => "",
         };
         try writer.print("{s}", .{ multiple });
+        if (value.multiple == .Exponential) {
+            try writer.print(" ^ (", .{});
+            try format(value.extra.?.*, fmt, options, writer);
+            try writer.print(")", .{});
+        }
     }
 
     pub fn deinit(self: *Real) void {
@@ -151,6 +172,9 @@ test "simple rationals" {
     try real.mul(pi);
     std.log.err("result = {d}", .{ real });
 
-    try real.mul(pi);
-    std.log.err("result * pi = {d}", .{ real });
+    //try real.mul(pi);
+    //std.log.err("result * pi = {d}", .{ real });
+
+    try real.pow(&pi);
+    std.log.err("(result) ^ pi = {d}", .{ real });
 }
