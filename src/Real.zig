@@ -143,7 +143,7 @@ pub const Real = struct {
         }
     }
 
-    pub fn format(value: Real, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+    fn formatImpl(value: Real, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype, depth: usize) @TypeOf(writer).Error!void {
         const prefix: []const u8 = switch (value.multiple) {
             .Root => "root(",
             .Sqrt => "√(",
@@ -155,31 +155,32 @@ pub const Real = struct {
 
         if (value.extra) |extra| {
             if (value.multiple != .Exponential) { // handled separately
-                try format(extra.*, fmt, options, writer);
+                try formatImpl(extra.*, fmt, options, writer, depth + 1);
                 try writer.print(", ", .{});
             }
         }
 
         switch (value.multiplier) {
             .Real => |real| {
-                try format(real.*, fmt, options, writer);
-                try writer.print(" * ", .{});
+                try formatImpl(real.*, fmt, options, writer, depth + 1);
+                if (depth > 0) try writer.print(" * ", .{});
             },
             .Rational => |rational| {
                 // avoid useless things like 1 * number
                 if (!rational.p.toConst().eq(bigOne) and !rational.q.toConst().eq(bigOne)) {
                     if (comptime std.mem.eql(u8, fmt, "d")) {
                         const float = rational.toFloat(f64) catch unreachable;
-                        try writer.print("{d} * ", .{ float });
+                        try writer.print("{d}", .{ float });
                     } else {
-                        try writer.print("{}/{} * ", .{ rational.p, rational.q });
+                        try writer.print("{}/{}", .{ rational.p, rational.q });
                     }
+                    if (depth > 0) try writer.print(" * ", .{});
                 }
             }
         }
 
         const multiple: []const u8 = switch (value.multiple) {
-            .One => "1",
+            .One => " * 1",
             .Pi => "π",
             .EulerNumber => "e",
             .GoldenRatio => "Φ",
@@ -188,9 +189,13 @@ pub const Real = struct {
         try writer.print("{s}", .{ multiple });
         if (value.multiple == .Exponential) {
             try writer.print(" ^ (", .{});
-            try format(value.extra.?.*, fmt, options, writer);
+            try formatImpl(value.extra.?.*, fmt, options, writer, 0);
             try writer.print(")", .{});
         }
+    }
+
+    pub fn format(value: Real, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        try formatImpl(value, fmt, options, writer, 0);
     }
 
     pub fn deinit(self: *Real) void {
@@ -218,7 +223,7 @@ test "simple rationals" {
     var pi = try Real.pi(allocator);
     defer pi.deinit();
 
-    std.log.err("{d} * {d}", .{ real, pi });
+    std.log.err("{d}, multiplied by {d}", .{ real, pi });
 
     try real.mul(pi);
     std.log.err("result = {d}", .{ real });
