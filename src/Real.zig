@@ -29,8 +29,21 @@ const Multiple = enum {
 const Multiplier = union(enum) {
     Real: *Real,
     // TODO: maybe make it a pointer too to save space
-    Rational: Rational
+    Rational: Rational,
+
+    pub fn isOne(self: Multiplier) bool {
+        var one = Rational.init(std.heap.page_allocator) catch unreachable;
+        defer one.deinit();
+        one.setInt(1) catch unreachable;
+
+        return switch (self) {
+            .Real => |real| real.multiple == .One and real.multiplier.isOne(),
+            .Rational => |rational| (rational.order(one) catch unreachable) == .eq
+        };
+    }
 };
+
+const bigOne = std.math.big.int.Const { .limbs = &.{1}, .positive = true };
 
 /// This class can represent exactly any real number
 pub const Real = struct {
@@ -48,6 +61,15 @@ pub const Real = struct {
         return Real {
             .multiplier = .{ .Rational = number },
             .multiple = multiple
+        };
+    }
+
+    fn initOne(allocator: Allocator, other: Real) !Real {
+        const real = try allocator.create(Real);
+        real.* = other;
+        return Real {
+            .multiplier = .{ .Real = real },
+            .multiple = .One
         };
     }
 
@@ -79,8 +101,10 @@ pub const Real = struct {
 
     pub fn mul(a: *Real, b: Real) std.mem.Allocator.Error!void {
         var new = try a.getAllocator().create(Real);
-        new.multiplier = a.multiplier;
-        new.multiple = b.multiple;
+        new.* = .{
+            .multiplier = a.multiplier,
+            .multiple = b.multiple
+        };
 
         switch (b.multiplier) {
             .Rational => |rational| {
@@ -93,23 +117,48 @@ pub const Real = struct {
         }
 
         a.multiplier = .{ .Real = new };
+        a.simplify();
     }
 
     pub fn pow(self: *Real, exponent: *Real) std.mem.Allocator.Error!void {
-        std.debug.assert(self.multiple == .One); // TODO: handle when it isn't the case
+        if (self.multiple != .One) {
+            const new = try Real.initOne(self.getAllocator(), self.*);
+            self.* = new;
+        }
+
         self.extra = exponent;
         self.multiple = .Exponential;
+        self.simplify();
+    }
+
+    pub fn simplify(self: *Real) void {
+        // we're multiplying a real by one, which is redundant
+        if (self.multiple == .One and self.multiplier == .Real) {
+            const real = self.multiplier.Real.*;
+            self.* = real;
+        }
+
+        if (self.extra) |extra| {
+            extra.simplify();
+        }
     }
 
     pub fn format(value: Real, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
         const prefix: []const u8 = switch (value.multiple) {
             .Root => "root(",
-            .Sqrt => "√",
+            .Sqrt => "√(",
             .Log => "log(",
             .Exponential => "(",
             else => ""
         };
         try writer.print("{s}", .{ prefix });
+
+        if (value.extra) |extra| {
+            if (value.multiple != .Exponential) { // handled separately
+                try format(extra.*, fmt, options, writer);
+                try writer.print(", ", .{});
+            }
+        }
 
         switch (value.multiplier) {
             .Real => |real| {
@@ -117,11 +166,14 @@ pub const Real = struct {
                 try writer.print(" * ", .{});
             },
             .Rational => |rational| {
-                if (comptime std.mem.eql(u8, fmt, "d")) {
-                    const float = rational.toFloat(f64) catch unreachable;
-                    try writer.print("{d} * ", .{ float });
-                } else {
-                    try writer.print("{}/{} * ", .{ rational.p, rational.q });
+                // avoid useless things like 1 * number
+                if (!rational.p.toConst().eq(bigOne) and !rational.q.toConst().eq(bigOne)) {
+                    if (comptime std.mem.eql(u8, fmt, "d")) {
+                        const float = rational.toFloat(f64) catch unreachable;
+                        try writer.print("{d} * ", .{ float });
+                    } else {
+                        try writer.print("{}/{} * ", .{ rational.p, rational.q });
+                    }
                 }
             }
         }
@@ -131,8 +183,7 @@ pub const Real = struct {
             .Pi => "π",
             .EulerNumber => "e",
             .GoldenRatio => "Φ",
-            .Root, .Log, .Exponential => ")",
-            .Sqrt => "",
+            .Root, .Sqrt, .Log, .Exponential => ")",
         };
         try writer.print("{s}", .{ multiple });
         if (value.multiple == .Exponential) {
