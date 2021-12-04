@@ -1,7 +1,14 @@
 const std = @import("std");
 const IntermediateRepresentation = @import("ir.zig");
 
+// TODO: rhm will have approximate mode, which runs faster at the expense of using floats instead of Reals
+// TODO: resolve() standard function for resolving equations (only on functions with no control flow)
+// ex: function sinus(x) -> sin(x)
+//     resolve(sinus, "=")  -- return a function that given an expected result b, returns a number a such that f(a) = b
+//     resolve(sinus, "=")(1) -- should be equal to π/2
+
 const Value = union(enum) {
+    // TODO: UInt32, Int32, etc. types to save on memory
     // TODO: use rationals
     Number: u32,
     String: []const u8
