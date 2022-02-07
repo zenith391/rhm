@@ -24,5 +24,5 @@ pub fn main() !void {
     const ir = try IntermediateRepresentation.encode(allocator, parsed);
     defer allocator.free(ir);
 
-    vm.execute(ir);
+    try vm.execute(allocator, ir);
 }

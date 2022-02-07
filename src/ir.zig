@@ -36,6 +36,10 @@ pub const Instruction = union(enum) {
         local: Local,
         source: Register
     },
+    LoadGlobal: struct {
+        target: Register,
+        global: []const u8
+    },
     CallFunction: struct {
         name: []const u8,
         args_start: Register,
@@ -231,11 +235,17 @@ fn encodeExpression(state: *IrEncodeState, expr: *parser.Expression) ExpressionE
         },
         .Local => |local| {
             const resultIdx = try state.getFreeRegister();
-            try state.instructions.append(.{ .LoadLocal = .{
-                .target = resultIdx,
-                // TODO: if not found in locals, load it from globals
-                .local = state.locals.get(local).?
-            }});
+            if (state.locals.get(local)) |localIdx| {
+                try state.instructions.append(.{ .LoadLocal = .{
+                    .target = resultIdx,
+                    .local = localIdx
+                }});
+            } else {
+                try state.instructions.append(.{ .LoadGlobal = .{
+                    .target = resultIdx,
+                    .global = local
+                }});
+            }
 
             return resultIdx;
         }

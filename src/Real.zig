@@ -25,7 +25,7 @@ const Multiple = enum {
     /// This takes 'multiplier' to the power of 'extra'
     Exponential,
 
-    /// It means the Real represents the result of multipler + multiple
+    /// It means the Real represents the result of multipler + extra
     Addition,
 
     // Actual irrational numbers
@@ -138,6 +138,21 @@ pub const Real = struct {
         self.simplify();
     }
 
+    pub fn add(a: *Real, b: Real) std.mem.Allocator.Error!void {
+        var newA = try a.getAllocator().create(Real);
+        newA.* = a.*;
+
+        var newB = try a.getAllocator().create(Real);
+        newB.* = b;
+
+        a.* = .{
+            .multiplier = .{ .Real = newA },
+            .extra = newB,
+            .multiple = .Addition,
+        };
+        a.simplify();
+    }
+
     pub fn simplify(self: *Real) void {
         // we're multiplying a real by one, which is redundant
         if (self.multiple == .One and self.multiplier == .Real) {
@@ -156,7 +171,7 @@ pub const Real = struct {
             .Sqrt => "√(",
             .Log => "log(",
             .Exponential => "(",
-            .Addition => "(",
+            .Addition => "((",
             else => ""
         };
         try writer.print("{s}", .{ prefix });
@@ -164,7 +179,11 @@ pub const Real = struct {
         if (value.extra) |extra| {
             if (value.multiple != .Exponential) { // handled separately
                 try formatImpl(extra.*, fmt, options, writer, depth + 1);
-                try writer.print(", ", .{});
+                if (value.multiple == .Addition) {
+                    try writer.print(") + (", .{});
+                } else {
+                    try writer.print(", ", .{});
+                }
             }
         }
 
@@ -204,7 +223,8 @@ pub const Real = struct {
             .Pi => "π",
             .EulerNumber => "e",
             .GoldenRatio => "Φ",
-            .Root, .Sqrt, .Log, .Exponential, .Addition => ")",
+            .Addition => "))",
+            .Root, .Sqrt, .Log, .Exponential => ")",
         };
         try writer.print("{s}", .{ multiple });
         if (value.multiple == .Exponential) {
@@ -229,6 +249,9 @@ pub const Real = struct {
                 rational.deinit();
             }
         }
+        // if (self.extra) |extra| {
+        //     extra.deinit();
+        // }
     }
 
     // TODO: approximate() function, which computes the irrational up to around the given number of digits
@@ -253,4 +276,19 @@ test "simple rationals" {
 
     try real.pow(&pi);
     std.log.err("(result) ^ pi = {}", .{ real });
+}
+
+test "addition" {
+    const allocator = std.testing.allocator;
+
+    var real = try Real.initFloat(allocator, @as(f64, 1.23456789));
+    defer real.deinit();
+
+    var pi = try Real.pi(allocator);
+    defer pi.deinit();
+
+    std.log.err("{d} + {d}", .{ real, pi });
+
+    try real.add(pi);
+    std.log.err("result = {d}", .{ real });
 }
