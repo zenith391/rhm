@@ -1,4 +1,5 @@
 const std = @import("std");
+const Real = @import("Real.zig").Real;
 const IntermediateRepresentation = @import("ir.zig");
 
 // TODO: rhm will have approximate mode, which runs faster at the expense of using floats instead of Reals
@@ -11,6 +12,7 @@ const Value = union(enum) {
     // TODO: UInt32, Int32, etc. types to save on memory
     // TODO: use rationals
     Number: u32,
+    // Number: Real
     String: []const u8
 };
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 const parser = @import("parser.zig").Parser;
-const Allocator = *std.mem.Allocator;
+const Allocator = std.mem.Allocator;
 const real = @import("Real.zig");
 
 const Local = enum(u8) { _ };

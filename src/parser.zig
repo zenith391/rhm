@@ -2,7 +2,7 @@ const std = @import("std");
 const ptk = @import("parser-toolkit");
 const matchers = ptk.matchers;
 
-const Allocator = *std.mem.Allocator;
+const Allocator = std.mem.Allocator;
 
 pub const Parser = struct {
     core: ParserCore,

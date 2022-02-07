@@ -1,16 +1,16 @@
 const std = @import("std");
 
 const Rational = std.math.big.Rational;
-const Allocator = *std.mem.Allocator;
+const Allocator = std.mem.Allocator;
+
+// TODO: maybe something that allows plugging your own irrational numbers as Multiple:
+// it could be defined with a representation (e.g. π) and a function to approximate the result
 
 /// Enumeration of exact value that are irrational
 const Multiple = enum {
     /// If multiple is one, this just means 'multiplier' field
     /// is the actual number.
     One,
-    Pi,
-    EulerNumber,
-    GoldenRatio,
 
     /// This one is special as it means the Real represents root_extra(multiplier)
     Root,
@@ -23,7 +23,15 @@ const Multiple = enum {
     Log,
 
     /// This takes 'multiplier' to the power of 'extra'
-    Exponential
+    Exponential,
+
+    /// It means the Real represents the result of multipler + multiple
+    Addition,
+
+    // Actual irrational numbers
+    Pi,
+    EulerNumber,
+    GoldenRatio,
 };
 
 const Multiplier = union(enum) {
@@ -52,10 +60,9 @@ pub const Real = struct {
     extra: ?*Real = null,
     multiple: Multiple,
 
-    // Constants like 2 / sqrt(π) can be translated into
-    // 2 * sqrt(π)⁻¹
-
-    // π + 1 is π * (π+1)/π
+    // We only need multiplication (and exponentiation) and addition as for example:
+    // 2 / sqrt(π) can be translated to 2 * sqrt(π)⁻¹
+    // and π - 1 can be translated to π + (-1)
 
     pub fn initRational(number: Rational, multiple: Multiple) Real {
         return Real {
@@ -149,6 +156,7 @@ pub const Real = struct {
             .Sqrt => "√(",
             .Log => "log(",
             .Exponential => "(",
+            .Addition => "(",
             else => ""
         };
         try writer.print("{s}", .{ prefix });
@@ -163,7 +171,13 @@ pub const Real = struct {
         switch (value.multiplier) {
             .Real => |real| {
                 try formatImpl(real.*, fmt, options, writer, depth + 1);
-                if (depth > 0) try writer.print(" * ", .{});
+                if (depth > 0) {
+                    if (value.multiple == .Addition) {
+                        try writer.writeAll(" + ");
+                    } else {
+                        try writer.writeAll(" * ");
+                    }
+                }
             },
             .Rational => |rational| {
                 // avoid useless things like 1 * number
@@ -174,7 +188,13 @@ pub const Real = struct {
                     } else {
                         try writer.print("{}/{}", .{ rational.p, rational.q });
                     }
-                    if (depth > 0) try writer.print(" * ", .{});
+                    if (depth > 0) {
+                        if (value.multiple == .Addition) {
+                            try writer.writeAll(" + ");
+                        } else {
+                            try writer.writeAll(" * ");
+                        }
+                    }
                 }
             }
         }
@@ -184,7 +204,7 @@ pub const Real = struct {
             .Pi => "π",
             .EulerNumber => "e",
             .GoldenRatio => "Φ",
-            .Root, .Sqrt, .Log, .Exponential => ")",
+            .Root, .Sqrt, .Log, .Exponential, .Addition => ")",
         };
         try writer.print("{s}", .{ multiple });
         if (value.multiple == .Exponential) {
@@ -211,7 +231,7 @@ pub const Real = struct {
         }
     }
 
-    // TODO: approximate() function, which computes the irrational up to the given number of digits
+    // TODO: approximate() function, which computes the irrational up to around the given number of digits
 };
 
 test "simple rationals" {
@@ -228,8 +248,8 @@ test "simple rationals" {
     try real.mul(pi);
     std.log.err("result = {d}", .{ real });
 
-    //try real.mul(pi);
-    //std.log.err("result * pi = {d}", .{ real });
+    try real.mul(pi);
+    std.log.err("result * pi = {d}", .{ real });
 
     try real.pow(&pi);
     std.log.err("(result) ^ pi = {}", .{ real });
