@@ -18,7 +18,7 @@ pub fn main() !void {
     const text = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(text);
     
-    const parsed = try Parser.parse(allocator, text);
+    const parsed = try Parser.parse(allocator, text, "hello.rhm");
     defer allocator.free(parsed);
 
     const ir = try IntermediateRepresentation.encode(allocator, parsed);

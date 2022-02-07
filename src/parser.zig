@@ -14,7 +14,7 @@ pub const Parser = struct {
         identifier,
         whitespace,
         linefeed,
-        double_quote,
+        double_quoted_string,
         @"(",
         @")",
         @",",
@@ -38,16 +38,18 @@ pub const Parser = struct {
         Pattern.create(.@",", matchers.literal(",")),
         Pattern.create(.@";", matchers.literal(";")),
         Pattern.create(.define, matchers.literal("=")),
-        Pattern.create(.double_quote, matchers.literal("\"")),
-        // TODO: just take any character except new line and control characters and some other
-        Pattern.create(.char, matchers.takeAnyOfIgnoreCase("abcdefghijklmnopqrstuvwxyz0123456789 _?.;:/!§%*$")),
+        Pattern.create(.double_quoted_string, matchers.sequenceOf(.{
+            matchers.literal("\""),
+            matchers.takeNoneOf("\"\r\n"),
+            matchers.literal("\""),
+        })),
     });
 
     const ParserCore = ptk.ParserCore(Tokenizer, .{ .whitespace });
     const ruleset = ptk.RuleSet(TokenType);
 
-    pub fn parse(allocator: Allocator, block: []const u8) !Block {
-        var tokenizer = Tokenizer.init(block);
+    pub fn parse(allocator: Allocator, block: []const u8, fileName: ?[]const u8) !Block {
+        var tokenizer = Tokenizer.init(block, fileName);
 
         var parser = Parser {
             .core = ParserCore.init(&tokenizer),
@@ -294,24 +296,9 @@ pub const Parser = struct {
         const state = self.core.saveState();
         errdefer self.core.restoreState(state);
 
-        var start: usize = 0;
-        var end: usize = 0;
-        _ = try self.core.accept(comptime ruleset.is(.double_quote));
-        // TODO: maybe just bypass the tokenizer
-        while (self.core.accept(comptime ruleset.oneOf(.{ .char, .identifier, .@"," }))) |token| {
-            end = @ptrToInt(token.text.ptr) - @ptrToInt(self.source.ptr) + token.text.len;
-            if (start == 0) {
-                start = end - token.text.len;
-            }
-        } else |_| {}
-
-        _ = try self.core.accept(comptime ruleset.is(.double_quote));
-        
-        if (start != 0) {
-            return self.source[start..end];
-        } else {
-            return "";
-        }
+        const token = try self.core.accept(comptime ruleset.is(.double_quoted_string));
+        const literal = token.text[1..token.text.len-1];
+        return literal;
     }
 
     // TODO: convert number to rationals
